@@ -1,0 +1,33 @@
+name: Push Updates to Repository
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Allows manual trigger from GitHub Actions tab
+
+jobs:
+  push-changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Grants permission to commit and push back to repo
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Add your build/update steps here (e.g., generate files, format code)
+      
+      - name: Commit and push updates
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          git add .
+          # Check if there are changes before committing
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: automated update from GitHub Actions"
+            git push
+          fi
