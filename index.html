@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="shortcut icon" type="image/x-icon" href="./src/imgs/favicon.ico">
+    <link rel="stylesheet" type="text/css" href="./src/css/style.css">
+    <title>Extract inline style from HTML</title>
+</head>
+<body>
+    <div class="wrapper">
+        <div class="inner">
+            <h1>Upload Your HTML Files</h1>
+            <img src="./src/imgs/upload.png" alt="Upload Icon"/>
+            <form id="uploadForm">
+                <div class="fileupload">
+                    <input type="file" id="fileInput" class="file-input" accept=".html" multiple required/>
+                    <label for="fileInput" class="fileLabel">Browse</label>
+                </div>
+                <div class="selected" id="selectedFiles">
+                    <span>No files chosen</span>
+                </div>
+                <button id="submitBtn" type="submit">Convert</button>
+            </form>
+            <div id="message"></div>
+            <div id="downloadLinkContainer" style="display: none;">
+                <h3>Converted Files</h3>
+                <div class="file-list" id="fileList"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. ENHANCED WINDOWS-1256 MAP (Added Eastern Arabic Numerals) ---
+        const WIN_1256_MAP = {
+            0x80: '\u20AC', 0x81: '\u067E', 0x82: '\u201A', 0x83: '\u0192', 
+            0x84: '\u201E', 0x85: '\u2026', 0x86: '\u2020', 0x87: '\u2021',
+            0x88: '\u02C6', 0x89: '\u2030', 0x8A: '\u0679', 0x8B: '\u2039',
+            0x8C: '\u0152', 0x8D: '\u0686', 0x8E: '\u0698', 0x8F: '\u0688',
+            0x90: '\u06AF', 0x91: '\u2018', 0x92: '\u2019', 0x93: '\u201C',
+            0x94: '\u201D', 0x95: '\u2022', 0x96: '\u2013', 0x97: '\u2014',
+            0x98: '\u06A9', 0x99: '\u2122', 0x9A: '\u0691', 0x9B: '\u203A',
+            0x9C: '\u0153', 0x9D: '\u200C', 0x9E: '\u200D', 0x9F: '\u06D2',
+            0xA0: '\u00A0', 0xA1: '\u0660', // ٠ (Eastern Arabic 0)
+            0xAB: '\u00AB', 0xBB: '\u00BB',
+            0xC1: '\u0661', // ١
+            0xC2: '\u0662', // ٢
+            0xC3: '\u0663', // ٣
+            0xC4: '\u0664', // ٤
+            0xC5: '\u0665', // ٥
+            0xC6: '\u0666', // ٦
+            0xC7: '\u0667', // ٧
+            0xC8: '\u0668', // ٨
+            0xC9: '\u0669'  // ٩
+        };
+
+        // --- 2. RESILIENT DECODER (Replicates your Node.js logic exactly) ---
+        function decodeHtmlBufferInBrowser(buf) {
+            let offset = 0;
+            if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
+                offset = 3; // Skip UTF-8 BOM
+            }
+
+            const out = [];
+            const len = buf.length;
+            let i = offset;
+
+            while (i < len) {
+                const b1 = buf[i];
+
+                // ASCII (0x00 - 0x7F)
+                if (b1 <= 0x7f) {
+                    out.push(String.fromCharCode(b1));
+                    i++;
+                    continue;
+                }
+
+                // 2-byte UTF-8 sequence (e.g., standard Arabic 0xD8..0xD9)
+                if (b1 >= 0xc2 && b1 <= 0xdf && i + 1 < len) {
+                    const b2 = buf[i + 1];
+                    if ((b2 & 0xc0) === 0x80) {
+                        const code = ((b1 & 0x1f) << 6) | (b2 & 0x3f);
+                        out.push(String.fromCharCode(code));
+                        i += 2;
+                        continue;
+                    }
+                }
+
+                // 3-byte UTF-8 sequence
+                if (b1 >= 0xe0 && b1 <= 0xef && i + 2 < len) {
+                    const b2 = buf[i + 1];
+                    const b3 = buf[i + 2];
+                    if ((b2 & 0xc0) === 0x80 && (b3 & 0xc0) === 0x80) {
+                        const code = ((b1 & 0x0f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f);
+                        if (code >= 0x0800 && (code < 0xd800 || code > 0xdfff)) {
+                            out.push(String.fromCharCode(code));
+                            i += 3;
+                            continue;
+                        }
+                    }
+                }
+
+                // 4-byte UTF-8 sequence
+                if (b1 >= 0xf0 && b1 <= 0xf4 && i + 3 < len) {
+                    const b2 = buf[i + 1];
+                    const b3 = buf[i + 2];
+                    const b4 = buf[i + 3];
+                    if ((b2 & 0xc0) === 0x80 && (b3 & 0xc0) === 0x80 && (b4 & 0xc0) === 0x80) {
+                        const code = ((b1 & 0x07) << 18) | ((b2 & 0x3f) << 12) | ((b3 & 0x3f) << 6) | (b4 & 0x3f);
+                        if (code >= 0x10000 && code <= 0x10ffff) {
+                            out.push(String.fromCodePoint(code));
+                            i += 4;
+                            continue;
+                        }
+                    }
+                }
+
+                // Stray Windows-1256 byte (catches smart quotes, dashes, and Eastern Arabic numerals)
+                if (WIN_1256_MAP[b1]) {
+                    out.push(WIN_1256_MAP[b1]);
+                    i++;
+                    continue;
+                }
+
+                // Fallback single-byte
+                out.push(String.fromCharCode(b1));
+                i++;
+            }
+
+            return out.join('');
+        }
+
+        // --- 3. MAIN PROCESSING LOGIC ---
+        function processHtmlInBrowser(htmlString) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(htmlString, 'text/html');
+            const stylesMap = new Map();
+            let classCounter = 1;
+
+            // Remove empty inline formatting tags
+            ['SPAN', 'B', 'I', 'U', 'STRONG', 'EM', 'FONT', 'SMALL', 'BIG'].forEach(tag => {
+                doc.querySelectorAll(tag).forEach(el => {
+                    if (el.id || el.getAttribute('name')) return;
+                    if (el.children.length === 0 && !el.textContent.trim()) el.remove();
+                });
+            });
+
+            // Merge adjacent spans with identical attributes
+            doc.querySelectorAll('span').forEach(current => {
+                let next = current.nextElementSibling;
+                while (next && next.tagName === 'SPAN' && areAttributesEqual(current, next)) {
+                    while (next.firstChild) current.appendChild(next.firstChild);
+                    const toRemove = next;
+                    next = next.nextElementSibling;
+                    toRemove.remove();
+                }
+            });
+
+            // Extract inline styles to classes
+            doc.querySelectorAll('[style]').forEach(el => {
+                const rawStyle = el.getAttribute('style');
+                if (!rawStyle || !rawStyle.trim()) { el.removeAttribute('style'); return; }
+                const canonicalKey = normalizeStyle(rawStyle);
+                if (!canonicalKey) { el.removeAttribute('style'); return; }
+                
+                let className = stylesMap.get(canonicalKey);
+                if (!className) {
+                    className = `class-${classCounter++}`;
+                    stylesMap.set(canonicalKey, className);
+                }
+                el.removeAttribute('style');
+                el.classList.add(className);
+            });
+
+            // Ensure charset
+            let head = doc.querySelector('head');
+            if (!head) { head = doc.createElement('head'); doc.documentElement.prepend(head); }
+            
+            let metaCharset = head.querySelector('meta[charset]');
+            if (metaCharset) metaCharset.setAttribute('charset', 'UTF-8');
+            else head.insertAdjacentHTML('afterbegin', '<meta charset="UTF-8">\n');
+
+            // Remove old style tags
+            head.querySelectorAll('style').forEach(s => s.remove());
+
+            // Generate CSS string
+            let cssContent = '/* Extracted and Merged Styles */\n';
+            stylesMap.forEach((className, canonicalKey) => {
+                const formatted = canonicalKey.split(';').map(d => {
+                    const idx = d.indexOf(':');
+                    return `${d.substring(0, idx)}: ${d.substring(idx + 1)}`;
+                }).join('; ');
+                cssContent += `.${className} { ${formatted}; }\n`;
+            });
+
+            // INJECT CSS DIRECTLY into the cleaned HTML so the Preview button works perfectly
+            const styleTag = doc.createElement('style');
+            styleTag.textContent = cssContent;
+            head.appendChild(styleTag);
+
+            return { 
+                html: '<!DOCTYPE html>\n' + doc.documentElement.outerHTML, 
+                css: cssContent 
+            };
+        }
+
+        function normalizeStyle(styleStr) {
+            if (!styleStr) return '';
+            const declarations = styleStr.split(';').map(d => d.trim()).filter(Boolean);
+            const normalized = [];
+            for (const decl of declarations) {
+                const colonIdx = decl.indexOf(':');
+                if (colonIdx === -1) continue;
+                const prop = decl.substring(0, colonIdx).trim().toLowerCase();
+                let val = decl.substring(colonIdx + 1).trim();
+                if (prop === 'font-size') {
+                    val = val.replace(/(\d*\.?\d+)\s*pt\b/gi, (_, p1) => `${+(parseFloat(p1)/12).toFixed(3)}em`);
+                    val = val.replace(/(\d*\.?\d+)\s*px\b/gi, (_, p1) => `${+(parseFloat(p1)/16).toFixed(3)}em`);
+                } else {
+                    val = val.replace(/(\d*\.?\d+)\s*pt\b/gi, (_, p1) => `${Math.round((parseFloat(p1)*96)/72)}px`);
+                }
+                val = val.replace(/\s+/g, ' ');
+                normalized.push({ prop, val });
+            }
+            normalized.sort((a, b) => a.prop.localeCompare(b.prop));
+            return normalized.map(d => `${d.prop}:${d.val}`).join(';');
+        }
+
+        function areAttributesEqual(el1, el2) {
+            const att1 = el1.attributes, att2 = el2.attributes;
+            if (att1.length !== att2.length) return false;
+            for (let i = 0; i < att1.length; i++) {
+                const name = att1[i].name;
+                if (name === 'id') return false;
+                if (name === 'style') {
+                    if (normalizeStyle(att1[i].value) !== normalizeStyle(att2[i].value)) return false;
+                } else if (att1[i].value !== att2[i].value) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // --- 4. UI EVENT LISTENERS ---
+        document.addEventListener('DOMContentLoaded', function() {
+            const fileInput = document.getElementById('fileInput');
+            const selectedFilesDiv = document.getElementById('selectedFiles');
+            const convertButton = document.getElementById('submitBtn');
+            const msg = document.getElementById('message');
+            const downloadContainer = document.getElementById('downloadLinkContainer');
+            const fileList = document.getElementById('fileList');
+
+            document.getElementById('uploadForm').addEventListener('submit', function(event) {
+                event.preventDefault();
+                convertButton.textContent = 'Converting..';
+                convertButton.classList.add("loading");
+                msg.className = '';
+                msg.textContent = '';
+                downloadContainer.style.display = 'none';
+                fileList.innerHTML = '';
+
+                const files = Array.from(fileInput.files);
+                if (files.length === 0) return;
+
+                let processedCount = 0;
+                
+                files.forEach((file) => {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        try {
+                            // 1. Read raw bytes
+                            const buffer = new Uint8Array(e.target.result);
+                            // 2. Apply resilient decoding (preserves UTF-8 Arabic, fixes stray Win-1256 bytes)
+                            const htmlString = decodeHtmlBufferInBrowser(buffer);
+                            // 3. Process the cleaned string
+                            const result = processHtmlInBrowser(htmlString);
+                            
+                            const blob = new Blob([result.html], { type: 'text/html;charset=utf-8' });
+                            const url = URL.createObjectURL(blob);
+                            const cleanName = file.name.replace(/\.html$/i, '') + '-clean.html';
+
+                            const item = document.createElement('div');
+                            item.className = 'file-item';
+                            
+                            const nameSpan = document.createElement('span');
+                            nameSpan.className = 'file-item-name';
+                            nameSpan.textContent = cleanName;
+                            nameSpan.title = cleanName;
+                            
+                            const actions = document.createElement('div');
+                            actions.className = 'file-actions';
+                            
+                            const dlLink = document.createElement('a');
+                            dlLink.href = url;
+                            dlLink.download = cleanName;
+                            dlLink.className = 'btn-action btn-download';
+                            dlLink.textContent = 'Download';
+                            
+                            const prevLink = document.createElement('a');
+                            prevLink.href = url;
+                            prevLink.target = '_blank';
+                            prevLink.className = 'btn-action btn-preview';
+                            prevLink.textContent = 'Preview';
+
+                            actions.appendChild(dlLink);
+                            actions.appendChild(prevLink);
+                            item.appendChild(nameSpan);
+                            item.appendChild(actions);
+                            fileList.appendChild(item);
+
+                            processedCount++;
+                            if (processedCount === files.length) {
+                                msg.textContent = 'All files successfully converted!';
+                                msg.className = 'active';
+                                downloadContainer.style.display = 'block';
+                                convertButton.textContent = 'Convert';
+                                convertButton.classList.remove("loading");
+                            }
+                        } catch (err) {
+                            console.error(err);
+                            msg.textContent = `Error processing ${file.name}: ${err.message}`;
+                            msg.className = 'active error';
+                            convertButton.textContent = 'Convert';
+                            convertButton.classList.remove("loading");
+                        }
+                    };
+                    // Read as ArrayBuffer instead of Text to prevent browser's default UTF-8 choking
+                    reader.readAsArrayBuffer(file);
+                });
+            });
+
+            fileInput.addEventListener('change', function(event) {
+                const fileNames = Array.from(event.target.files).map(f => f.name).join(', ');
+                selectedFilesDiv.textContent = fileNames || 'No files chosen';
+                convertButton.style.display = fileInput.files.length > 0 ? 'block' : 'none';
+            });
+        });
+    </script>
+</body>
+</html>
